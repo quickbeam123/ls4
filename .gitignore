@@ -1,0 +1,12 @@
+*.o
+!aiger.o
+*.od
+*.or
+*.aig
+*.trp
+callgrind.out.*
+.kdbgrc.*
+ls4
+ls4_debug
+ls4_release
+depend.mk

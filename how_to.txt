@@ -1,0 +1,23 @@
+--- To compile:
+
+cd core
+make         # for an optimized version, but with asserts and debug info
+make r       # for a release version (optimized, no asserts, no debug info)
+make d       # for a debug version (unoptimized, asserts, debug info)
+
+Note: Although the sources of the used aiger library are provided,
+they are not compiled automatically by the makefile. That's why 
+a compiled module aiger.o is also included. It is a 64bit version of the library.
+If you need to compile ls4 for 32bit, either rename the provided file
+aiger.o_32 to aiger.o and then run make, or persuade the makefile to compile aiger.o for you from the sources.
+
+--- To run:
+
+./ls4 spec_cl_5.trp
+
+./ls4 -format=aiger cuhanoi4.aig
+
+./ls4 --help
+
+The relevant options are INPUT OPTIONS, (AIGER OPTIONS) and MAIN OPTIONS.
+The other categories are inherited from Minisat and their effect on ls4 has not been tested.

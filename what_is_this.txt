@@ -1,0 +1,10 @@
+LS4: A PLTL-prover based on labelled superposition with partial model guidance.
+
+LS4 [1] is a prover for Propositional Linear Temporal Logic (PLTL). On the logic side, it is based on the calculus LPSup [2]. However, instead of saturating the given clause set, it uses partial models to guide the inference process.
+
+LS4 uses the Minisat 2.2 SAT-solver as its internal solving engine. 
+
+[1] PLTL-Prover Based on Labelled Superposition with Partial Model Guidance
+Suda M., Weidenbach C., in IJCAR 2012 (eds. B. Gramlich, D. Miller, and U. Sattler), LNAI 7364, pp. 537-543. Springer, Heidelberg (2012) 
+[2] Labelled Superposition for PLTL
+Suda M., Weidenbach C., in LPAR-18 (eds. N. Björner and A. Voronkov), LNCS 7180, pp. 391-405. Springer, Heidelberg (2012) 
