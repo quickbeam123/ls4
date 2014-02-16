@@ -62,7 +62,7 @@ static BoolOption opt_elimination("MAIN", "simp", "Perform variable elimination 
 
 class MarkingSolver : public Solver {
   public:
-    uint32_t model_hash;         // actually a little ugly to put it here, because it is not related to marking at all (assessed, updated an used only externally)
+    uint32_t model_hash;         // actually a little ugly to put it here, because it is not related to marking at all (accessed, updated an used only externally)
   
     MarkingSolver();
     ~MarkingSolver();
@@ -643,18 +643,18 @@ int SolvingContext::decideUnderMA(int block_idx, int layer_idx, vec<Lit> &our_ma
             int larger;
             int diff;
             int leap_idx;
-                                   
+     
             if (target_layer_idx > i) {
-              larger = i;
+              larger = target_layer_idx;
               diff = target_layer_idx - i;
             } else {
-              larger = target_layer_idx;
+              larger = i;
               diff = i - target_layer_idx;
             }
-          
+                         
             leap_idx = larger - larger % diff;            
             Layer &source_layer = *target_block.layers[leap_idx];
-            
+
             for (Layer::iterator it = source_layer.begin(); it != source_layer.end(); it++) {                  
               leaped_clauses++;
               goal_clauses.push(*it);
