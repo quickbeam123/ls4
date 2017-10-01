@@ -24,11 +24,17 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 #include "mtl/Vec.h"
 #include "core/SolverTypes.h"
 
+#include <string>
+#include <vector>
+
 typedef Minisat::vec< Minisat::vec<Minisat::Lit> > Clauses;
+
+typedef std::vector<std::string> Names;
 
 void trp_LoadSpec( /* input:*/ 
                    const char* input_name, // can be 0 for parsing stdin                   
                    /*output:*/ 
-                   int &signature_size, Clauses &initial, Clauses &goal, Clauses &universal, Clauses &step);
+                   int &signature_size, Clauses &initial, Clauses &goal, Clauses &universal, Clauses &step,
+                   Names& varNames); // translation variables will not be given names, so that we don't report on them (``project away'' semantics is the right one)
 
 #endif

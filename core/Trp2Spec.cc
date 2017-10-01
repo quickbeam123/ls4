@@ -212,6 +212,7 @@ static void expect(const char * id) {
 }
 
 static std::map<std::string,int> identifiers;
+static Names* pvarNames;
 
 Var trp_ReadId() {
   expect(TOKEN_TEXT);
@@ -222,8 +223,11 @@ Var trp_ReadId() {
   fprintf(out_file,"%s",last_ident);  
 #endif
   
-  if (identifiers.find(last_ident) == identifiers.end()) { // new id
-    Var var = identifiers.size()+1;  // we start numbering from 1, so that 0 (which cannot be negated safely) is never used 
+  if (identifiers.find(last_ident) == identifiers.end()) { // new id  
+    // we start numbering from 1, so that 0 (which cannot be negated safely) is never used
+    Var var = identifiers.size()+1;
+    // first var's index is, however, the zero-th slot here, that's fine since we in the end shift back to start from 0
+    pvarNames->push_back(std::string(last_ident));
     identifiers[last_ident] = var;
     return var;
   } else 
@@ -376,7 +380,9 @@ void trp_ReadClauseCore(bool universal,vec<Lit>& data, Lit& event_lit, bool& had
   lexNextToken(),expect(TOKEN_RPAR);
 }
 
-void trp_LoadSpec(const char* input_name, int &signature_size, Clauses &initial, Clauses &goal, Clauses &universal, Clauses &step) {     
+void trp_LoadSpec(const char* input_name,
+                  int &signature_size, Clauses &initial, Clauses &goal, Clauses &universal, Clauses &step,
+                  Names& varNames) {
   if (input_name)
     file = fopen (input_name, "r");
   else
@@ -402,6 +408,8 @@ void trp_LoadSpec(const char* input_name, int &signature_size, Clauses &initial,
   
   lexInit();
   identifiers.clear();
+  varNames.clear();
+  pvarNames = &varNames;
   
   lexNextToken(),expect("and");
   lexNextToken(),expect(TOKEN_LPAR);
@@ -439,7 +447,7 @@ void trp_LoadSpec(const char* input_name, int &signature_size, Clauses &initial,
           //printf("Universal clause:");      
         }
       } else {
-        clause.push(event_lit); //let as store the event_lit as the last literal
+        clause.push(event_lit); //let us store the event_lit as the last literal
         goal.push(clause);      // abusing goal clauses for storing eventuality clauses
       }
     

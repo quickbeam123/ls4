@@ -862,6 +862,10 @@ int main(int argc, char** argv)
     Clauses goal;
     Clauses universal;
     Clauses step;
+    
+    // translation variables will not be given names, so that we don't report on them (``project away'' semantics is the right one)
+    // (this way, we will also not crash if the input comes from AIGER (where everything will be projected away)
+    Names varNames;
        
     parseOptions(argc, argv, true);
 
@@ -869,7 +873,7 @@ int main(int argc, char** argv)
       aiger_LoadSpec((argc == 1) ? 0 : argv[1], (int)0, (int)opt_pg, (int)opt_verbose, opt_kth_property, (int)true, (int)opt_reach_as_live,
                    sigsize,initial,goal,universal,step);
     else if (strcmp(opt_format,"trp") == 0)
-      trp_LoadSpec((argc == 1) ? 0 : argv[1],sigsize,initial,goal,universal,step);
+      trp_LoadSpec((argc == 1) ? 0 : argv[1],sigsize,initial,goal,universal,step,varNames);
     else {
       printf("Unknown format: %s!\n",(const char *)opt_format);
       exit (1);
