@@ -152,7 +152,9 @@ class SimpSolver : public Solver {
     bool          merge                    (const Clause& _ps, const Clause& _qs, Var v, int& size);
     bool          backwardSubsumptionCheck (bool verbose = false);
     bool          eliminateVar             (Var v);
+  public:
     void          extendModel              ();
+  protected:
 
     void          removeClause             (CRef cr);
     bool          strengthenClause         (CRef cr, Lit l);

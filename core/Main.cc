@@ -58,6 +58,8 @@ static IntOption  opt_kth_property ("AIGER", "id","Pick a particular property fr
 static BoolOption opt_verbose    ("MAIN", "verbose", "Verbose output.", true);                                                 
 static BoolOption opt_elimination("MAIN", "simp", "Perform variable elimination before actual solving.", true);
 
+static BoolOption opt_printModel ("MAIN", "model","Print model (currently only works for trp inputs).", true);
+
 //=================================================================================================
 
 class MarkingSolver : public Solver {
@@ -236,7 +238,11 @@ struct SolvingContext {
   int learned_clauses;
   int leaped_clauses;
   
-  SolvingContext() : solver_called(0), learned_clauses(0), leaped_clauses(0)/*, lastDrawingSize(0)*/ {}
+  bool discoveredModel;
+  int model_block, model_layer;    // block index and layer index when repetition found
+  int model_block2, model_layer2;  // the earlier place with the same model
+  
+  SolvingContext() : solver_called(0), learned_clauses(0), leaped_clauses(0), discoveredModel(false) /*, lastDrawingSize(0)*/  {}
   
   ~SolvingContext() {
     for (int i = 0; i < blocks.size(); i++)
@@ -505,10 +511,18 @@ int SolvingContext::decideUnderMA(int block_idx, int layer_idx, vec<Lit> &our_ma
           if (cur_solver.model[k+sigsize] != otherSolver.model[k+sigsize])
             goto nextSolver;
       
+        discoveredModel = true;
+        model_block2 = i;
+        model_layer2 = j;
+        model_block = block_idx;
+        model_layer = layer_idx;
+        
         printf("SAT: model found\n");
+        /*
         if (opt_verbose) {
           printModel(i,j,block_idx,layer_idx);  // TODO: model for cuhanoi7.aig looks suspicious - investigate
         }
+        */
         return 1;
         
         nextSolver: ;
@@ -712,134 +726,315 @@ void insertClause(SimpSolver &solver, vec<Lit> &clause, int sigsize, bool shifte
   solver.addClause(prepared); // printClause(prepared);  
 }
 
-void analyzeSpec(int sigsize, Clauses &initial, Clauses &goal, Clauses &universal, Clauses &step) {  
-  SolvingContext context;
-    
-  // preprocessing
-  {
-    int new_sigsize;
-    SimpSolver simpSolver;
-    
-    //TODO: play with these guys -- and possibly also with other params of minisat ...
-    
-    //simpSolver.use_asymm = true;    
-    //simpSolver.grow = 10; 
-    
-    // 0,1,...,sigsize-1           the basic signature
-    // sigsize,...,2*sigsize-1     the primed signature
-    // 2*sigsize                   the initial marker 
-    // 2*sigsize+1                 the goal marker
-    for (int j = 0; j < 2*sigsize+2; j++)
-      simpSolver.newVar();
-  
-    // initial clauses
-    for (int j = 0; j < initial.size(); j++) {
-      //vec<int> empty; printf("Initial clause: "); printClause(initial[j],empty);
-      insertClause(simpSolver,initial[j],sigsize,true,mkLit(2*sigsize));  // marked as initial
-    }
-    
-    // goal clauses        
-    for (int j = 0; j < goal.size(); j++) {
-      //vec<int> empty; printf("Goal clause: "); printClause(goal[j],empty);
-      insertClause(simpSolver,goal[j],sigsize,true,mkLit(2*sigsize+1));   // marked as goal
-    }
-         
-    // universal clauses
-    for (int j = 0; j < universal.size(); j++) {
-      //vec<int> empty; printf("Universal clause: "); printClause(universal[j],empty);
-      insertClause(simpSolver,universal[j],sigsize,true);  //universals are unmarked
-    }
-    
-    // step clauses    
-    for (int j = 0; j < step.size(); j++) {
-      //vec<int> empty; printf("Step clause: "); printClause(step[j],empty);
-      insertClause(simpSolver,step[j],0,false,mkLit(2*sigsize,true));  // marked as incompatible with initial
-    }
-      
-    // freeze the markers, and all variables from lower signature
-    simpSolver.setFrozen(2*sigsize,true);
-    simpSolver.setFrozen(2*sigsize+1,true);
-    for (int i = 0; i < sigsize; i++) // don't eliminate lower signature variables (it is trivial, and it spoils the statistics)
-      simpSolver.setFrozen(i,true);    
-    for (int j = 0; j < step.size(); j++)
-      for (int i = 0; i < step[j].size(); i++)
-        if (var(step[j][i])<sigsize) {
-          simpSolver.setFrozen(var(step[j][i]),true); // here we do it again, but who cares
-          simpSolver.setFrozen(var(step[j][i])+sigsize,true); //and this is the important part
-        }
-    
-    int before = simpSolver.nClauses();    // in fact, we don't see the number of unit clauses here !!!
-         
-    if (opt_elimination ? !simpSolver.eliminate(true) : !simpSolver.simplify()) {
-      printf("UNSAT: solved by variable elimantion!\n");
-      return;
-    }
-    
-    Clauses simpClauses;
-    simpSolver.copyOutClauses(simpClauses);
-    
-    int new_var_count = 0;
-    vec<Var> renaming;
-    
-    for (int i = sigsize; i < 2*sigsize+2; i++) { // the two markers didn't get eliminated!
-      renaming.push();
-      
-      if (!simpSolver.isEliminated(i))
-        renaming.last() = new_var_count++;
-      else
-        renaming.last() = var_Undef;      
-    }
-    
-    new_sigsize = new_var_count - 2; //the two markers don't count
-    context.sigsize = new_sigsize;
-    
-    if (opt_verbose) {
-      printf("Eliminated %d variables -- new sigsize: %d.\n",simpSolver.eliminated_vars,new_sigsize);
-      printf("Simplified from %d to %d clauses.\n",before,simpSolver.nClauses());          
-    }
-    
-    for (int i = 0; i < simpClauses.size(); i++ ) {
-      vec<Lit>& clause = simpClauses[i];
+inline void printLits(const vec<Lit> &lits) {
+  for (int i = 0; i < lits.size(); i++)
+    printf("%s%d ",sign(lits[i])?"-":"",var(lits[i]));
+  printf("\n");
+}
 
-      int j,k;
-      bool goal = false;
+static void printState(vec<bool>& cur_model, Names& varNames, int idx, bool isGoal) {
+  printf("State %d",idx);
+  if (isGoal) {
+    printf(" (goal) ");
+  }
+  printf(": [");
+  for (int n = 0; (n < cur_model.size()) && (n < (int)varNames.size()); n++) {
+    if (n > 0)
+      printf(", ");
+    if (cur_model[n]) {
+      printf("%s",varNames[n].c_str());
+    } else {
+      printf("not(%s)",varNames[n].c_str());
+    }
+  }
+  printf("]\n");
+}
+
+static void verifyStep(int sigsize, Clauses &initial, Clauses &goal, Clauses &universal, Clauses &step, vec<bool>& cur_model, vec<bool>& prev_model, bool isInitial, bool isGoal) {
+  if (isInitial) { // check initial
+    for (int i = 0; i < initial.size(); i++) {
+      for (int j = 0; j < initial[i].size(); j++)
+        if (cur_model[var(initial[i][j])] != sign(initial[i][j]))
+          goto next_initial_clause;
       
-      for (j = 0, k = 0; j < clause.size(); j++) {
-        Lit l = clause[j];
-        Var v = var(l);
-
-        if (v == 2*sigsize+1) { // we remeber it, but newly don't keep explicitly anymore (will later use MarkingSolver instead)
-          assert(!sign(l));
-          goal = true;
-        } else {
-          clause[k++] = l;
-        }
-      }
-      clause.shrink(j-k);  //one literal potentially missing            
-
-      // apply the renaming
-      for (int j = 0; j < clause.size(); j++) {
-        Lit l = clause[j];
-        Var v = var(l);
-
-        if (v < sigsize)
-          clause[j] = mkLit(renaming[v],sign(l));
-        else {
-          clause[j] = mkLit(renaming[v-sigsize]+new_sigsize,sign(l));          
-        }            
-      }
+      printf("Initial clause UNSAT: "); printLits(initial[i]);
+      assert(false);
       
-      //vec<int> empty; printf("%s clause: ",goal ? "Goal" : "Normal"); printClause(clause,empty);
-      
-      Clauses& target = (goal ? context.goal_clauses : context.rest_clauses);
+      next_initial_clause: ;
+    }
+  }
 
-      int idx = target.size();
-      target.push();
-      clause.moveTo(target[idx]);            
+  if (isGoal) { // check goal
+    for (int i = 0; i < goal.size(); i++) {
+      for (int j = 0; j < goal[i].size(); j++)
+        if (cur_model[var(goal[i][j])] != sign(goal[i][j]))
+          goto next_goal_clause;
+      
+      printf("Goal clause UNSAT: "); printLits(goal[i]);
+      assert(false);
+      
+      next_goal_clause: ;
     }
   }
   
+  // check universal
+  {
+    for (int i = 0; i < universal.size(); i++) {
+      for (int j = 0; j < universal[i].size(); j++)
+        if (cur_model[var(universal[i][j])] != sign(universal[i][j]))
+          goto next_universal_clause;
+      
+      printf("Universal clause UNSAT: "); printLits(universal[i]);
+      assert(false);
+      
+      next_universal_clause: ;
+    }
+  }
+  
+  // check step
+  if (!isInitial) {
+    for (int i = 0; i < step.size(); i++) {
+      for (int j = 0; j < step[i].size(); j++)
+        if (var(step[i][j]) < sigsize) {
+          if (prev_model[var(step[i][j])] != sign(step[i][j]))
+            goto next_step_clause;
+        } else {
+          if (cur_model[var(step[i][j])-sigsize] != sign(step[i][j]))
+            goto next_step_clause;
+        }
+      
+      printf("Step clause UNSAT: "); printLits(step[i]);
+      assert(false);
+      
+      next_step_clause: ;
+    }
+  }
+}
+
+void analyzeSpec(int sigsize, Clauses &initial, Clauses &goal, Clauses &universal, Clauses &step, Names& varNames) {
+  SolvingContext context;
+    
+  // preprocessing
+  int new_sigsize;
+  SimpSolver simpSolver;
+    
+  //TODO: play with these guys -- and possibly also with other params of minisat ...
+  
+  //simpSolver.use_asymm = true;
+  //simpSolver.grow = 10;
+  
+  // 0,1,...,sigsize-1           the basic signature
+  // sigsize,...,2*sigsize-1     the primed signature
+  // 2*sigsize                   the initial marker
+  // 2*sigsize+1                 the goal marker
+  for (int j = 0; j < 2*sigsize+2; j++)
+    simpSolver.newVar();
+
+  // initial clauses
+  for (int j = 0; j < initial.size(); j++) {
+    //vec<int> empty; printf("Initial clause: "); printClause(initial[j],empty);
+    insertClause(simpSolver,initial[j],sigsize,true,mkLit(2*sigsize));  // marked as initial
+  }
+  
+  // goal clauses
+  for (int j = 0; j < goal.size(); j++) {
+    //vec<int> empty; printf("Goal clause: "); printClause(goal[j],empty);
+    insertClause(simpSolver,goal[j],sigsize,true,mkLit(2*sigsize+1));   // marked as goal
+  }
+  
+  // universal clauses
+  for (int j = 0; j < universal.size(); j++) {
+    //vec<int> empty; printf("Universal clause: "); printClause(universal[j],empty);
+    insertClause(simpSolver,universal[j],sigsize,true);  //universals are unmarked
+  }
+  
+  // step clauses
+  for (int j = 0; j < step.size(); j++) {
+    //vec<int> empty; printf("Step clause: "); printClause(step[j],empty);
+    insertClause(simpSolver,step[j],0,false,mkLit(2*sigsize,true));  // marked as incompatible with initial
+  }
+  
+  // freeze the markers, and all variables from lower signature
+  simpSolver.setFrozen(2*sigsize,true);
+  simpSolver.setFrozen(2*sigsize+1,true);
+  for (int i = 0; i < sigsize; i++) // don't eliminate lower signature variables (it is trivial, and it spoils the statistics)
+    simpSolver.setFrozen(i,true);
+  for (int j = 0; j < step.size(); j++)
+    for (int i = 0; i < step[j].size(); i++)
+      if (var(step[j][i])<sigsize) {
+        simpSolver.setFrozen(var(step[j][i]),true); // here we do it again, but who cares
+        simpSolver.setFrozen(var(step[j][i])+sigsize,true); //and this is the important part
+      }
+  
+  int before = simpSolver.nClauses();    // in fact, we don't see the number of unit clauses here !!!
+  
+  if (opt_elimination ? !simpSolver.eliminate(true) : !simpSolver.simplify()) {
+    printf("UNSAT: solved by variable elimantion!\n");
+    return;
+  }
+  
+  Clauses simpClauses;
+  simpSolver.copyOutClauses(simpClauses);
+  
+  vec<Var> renaming;
+  vec<Var> inv_renaming;
+  
+  for (int i = sigsize; i < 2*sigsize+2; i++) { // the two markers didn't get eliminated!
+    renaming.push();
+    
+    if (!simpSolver.isEliminated(i)) {
+      renaming.last() = inv_renaming.size();
+      inv_renaming.push(i-sigsize);
+    } else {
+      renaming.last() = var_Undef;
+    }
+  }
+  
+  new_sigsize = inv_renaming.size() - 2; //the two markers don't count
+  context.sigsize = new_sigsize;
+  
+  if (opt_verbose) {
+    printf("Eliminated %d variables -- new sigsize: %d.\n",simpSolver.eliminated_vars,new_sigsize);
+    printf("Simplified from %d to %d clauses.\n",before,simpSolver.nClauses());
+  }
+  
+  for (int i = 0; i < simpClauses.size(); i++ ) {
+    vec<Lit>& clause = simpClauses[i];
+
+    int j,k;
+    bool goal = false;
+    
+    for (j = 0, k = 0; j < clause.size(); j++) {
+      Lit l = clause[j];
+      Var v = var(l);
+
+      if (v == 2*sigsize+1) { // we remeber it, but newly don't keep explicitly anymore (will later use MarkingSolver instead)
+        assert(!sign(l));
+        goal = true;
+      } else {
+        clause[k++] = l;
+      }
+    }
+    clause.shrink(j-k);  //one literal potentially missing
+
+    // apply the renaming
+    for (int j = 0; j < clause.size(); j++) {
+      Lit l = clause[j];
+      Var v = var(l);
+
+      if (v < sigsize)
+        clause[j] = mkLit(renaming[v],sign(l));
+      else {
+        clause[j] = mkLit(renaming[v-sigsize]+new_sigsize,sign(l));
+      }
+    }
+    
+    //vec<int> empty; printf("%s clause: ",goal ? "Goal" : "Normal"); printClause(clause,empty);
+    
+    Clauses& target = (goal ? context.goal_clauses : context.rest_clauses);
+
+    int idx = target.size();
+    target.push();
+    clause.moveTo(target[idx]);
+  }
+  
   context.iterativeSearch();
+  
+  if (context.discoveredModel /* && opt_printModel && varNames.size() > 0 */ ) {
+    
+    vec<bool> prev_model;
+    vec<bool> cur_model;
+    vec<bool> rep_model; int rep_idx = -1;
+    vec<bool> rep_succ; bool rep_succ_goal = false;
+    
+    int len = 0;
+    int len2 = 0;
+    for (int i = 0; i <= context.model_block; i++) {
+      int toAdd = context.blocks[i]->phase+1;
+      len += toAdd;
+      if (i <= context.model_block2)
+        len2 += toAdd;
+    }
+    len -= context.model_layer;
+    len2 -= context.model_layer2;
+    
+    // printf("A laso-model of shape %d-%d.\n",len,len2); // wouldn't work in general (see the rep_succ trick)
+    int idx = 0;
+    
+    // we do model reconstruction, model checking and model printing at the same time
+    for (int i = 0; i <= context.model_block; i++) {
+      SolvingContext::Block& cur_block = *context.blocks[i];
+    
+      for (int j = cur_block.phase; j >= 0; j--) {
+        MarkingSolver& cur_solver = *cur_block.solvers[j];
+        
+        //clear the model in simpSolver
+        simpSolver.model.clear();
+        simpSolver.model.growTo(simpSolver.nVars());
+        for (int n = 0; n < simpSolver.nVars(); n++)
+          simpSolver.model[n] = l_Undef;
+      
+        if (prev_model.size()) {
+          assert(prev_model.size() == sigsize);
+          for (int n = 0; n < sigsize; n++) {
+            simpSolver.model[n] = lbool(prev_model[n]);
+          }
+
+          // non-initial marker
+          simpSolver.model[2*sigsize] = l_True;
+        } else { // the initial marker
+          simpSolver.model[2*sigsize] = l_False;
+        }
+      
+        // the goal marker
+        simpSolver.model[2*sigsize+1] = (j==0) ? l_False : l_True;
+      
+        // and the actual new stuff
+        for (int n = 0; n < new_sigsize; n++) {
+          simpSolver.model[sigsize + inv_renaming[n]] = cur_solver.model[new_sigsize+n];
+        }
+        
+        simpSolver.extendModel();
+      
+        cur_model.clear();
+        for (int n = sigsize; n < 2*sigsize; n++) {
+          assert(simpSolver.model[n] != l_Undef);
+          
+          cur_model.push(simpSolver.model[n]==l_True);
+        }
+        
+        printState(cur_model,varNames,idx,j==0);
+        
+        verifyStep(sigsize,initial,goal,universal,step,cur_model,prev_model,!prev_model.size(),j==0);
+        cur_model.copyTo(prev_model);
+        
+        if (i == context.model_block2 && j == context.model_layer2) {
+          cur_model.copyTo(rep_model);
+          rep_idx = idx;
+        }
+        
+        if (idx == rep_idx+1) {
+          cur_model.copyTo(rep_succ);
+          rep_succ_goal = (j==0);
+        }
+        
+        if (i == context.model_block && j == context.model_layer) {
+          if (cur_model != rep_model) {
+            // printf("rep_succ trick\n");
+            // formally, let's take one more step
+            verifyStep(sigsize,initial,goal,universal,step,rep_succ,cur_model,false,rep_succ_goal);
+            printState(rep_succ,varNames,idx+1,rep_succ_goal);
+            rep_idx++;
+          }
+          printf("Same as state %d\n",rep_idx);
+          goto done;
+        }
+        
+        idx++;
+      }
+    }
+    done: ;
+  }
 }
 
 //=================================================================================================
@@ -882,7 +1077,7 @@ int main(int argc, char** argv)
     if (opt_verbose)
       printf("Loaded spec -- sigsize: %d, #initial: %d, #goal: %d, #universal: %d, #step: %d\n",sigsize,initial.size(),goal.size(),universal.size(),step.size());
 
-    analyzeSpec(sigsize,initial,goal,universal,step);
+    analyzeSpec(sigsize,initial,goal,universal,step,varNames);
 
     } catch (OutOfMemoryException&){ //bad_alloc
         printf("===============================================================================\n");
