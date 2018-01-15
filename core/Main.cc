@@ -940,7 +940,7 @@ void analyzeSpec(int sigsize, Clauses &initial, Clauses &goal, Clauses &universa
   
   context.iterativeSearch();
   
-  if (context.discoveredModel /* && opt_printModel && varNames.size() > 0 */ ) {
+  if (context.discoveredModel && opt_printModel) {
     
     vec<bool> prev_model;
     vec<bool> cur_model;
